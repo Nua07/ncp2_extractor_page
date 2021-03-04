@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ncp2 추출</title>
+
+    <script src="https://unpkg.com/sweetalert/dist/sweetalert.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.5.0/jszip.min.js"
+        integrity="sha512-y3o0Z5TJF1UsKjs/jS2CDkeHN538bWsftxO9nctODL5W40nyXIbs0Pgyu7//icrQY9m6475gLaVr39i/uh/nLA=="
+        crossorigin="anonymous"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"
+        integrity="sha512-Qlv6VSKh1gDKGoJbnyA5RMXYcvnpIqhO++MhIM2fStMcGT9i2T//tSwYFlcyoRRDcDZ+TYHpH8azBBCyhpSeqw=="
+        crossorigin="anonymous"></script>
+    <style>
+        .container {
+            padding-right: 15px;
+            padding-left: 15px;
+            margin-right: auto;
+            margin-left: auto;
+        }
+
+        @media (min-width: 768px) {
+            .container {
+                width: 750px;
+            }
+        }
+
+        @media (min-width: 992px) {
+            .container {
+                width: 970px;
+            }
+        }
+
+        @media (min-width: 1200px) {
+            .container {
+                width: 1170px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>NCP2 extractor</h1>
+        <p>ncp2 추출기 스마트펜 음원 추출하려고 만ㄷ....</p>
+        <input type="file" name="file" onchange="on_file_selection(this)" accept=".ncp2">
+    </div>
+    
+    <script>
+        let pos = 0
+
+        function read_string(dataview, length) {
+            let str = ""
+            for (let i = 0; i < length; i++) {
+                str += String.fromCharCode(dataview.getUint8(pos))
+                pos += 1
+            }
+            return str
+        }
+
+        function get_string_range(dataview, start, end) {
+            let str = ""
+            for (let i = start; i < end; i++) {
+                str += String.fromCharCode(dataview.getUint8(i))
+            }
+            return str
+        }
+
+        async function on_file_selection(e) {
+            let file = e.files[0];
+            let buffer = await file.arrayBuffer();
+            let dataview = new DataView(buffer)
+            let data_length = dataview.byteLength
+            let file_table = []
+            let zip = new JSZip();
+
+            pos = 0
+
+            if (read_string(dataview, 4) != "NPQF") {
+                swal("ERROR", "Invalid Header !", "error")
+                return
+            }
+
+            pos += 28 //skip header (28byte without NPQF)
+
+            while (pos < data_length) {
+                console.log("loop")
+                let section_header = read_string(dataview, 8)
+                if (section_header == "\x50\x53\x61\x10\x64\x00\x00\x00") {
+                    let section_name = read_string(dataview, 4)
+                    let section_length = dataview.getUint32(pos, true)
+                    pos += 4
+
+                    if (section_name == "INFO") {
+                        pos += section_length
+                    } else if (section_name == "FTBL") {
+                        //FileTable parse
+                        let ppos = 0
+                        while (ppos < section_length) {
+                            let file_name = read_string(dataview, 44).replace(/\u0000/g, "")
+                            let start = dataview.getUint32(pos, true)
+                            pos += 8 //skip start and null 4 byte
+
+                            let length = dataview.getUint32(pos, true)
+                            pos += 12 //skip length and length(?) and null 4 byte}
+                            ppos += 64
+                            file_table.push([file_name, start, length])
+                        }
+                    } else if (section_name == "DATA") {
+                        for (let i = 0; i < file_table.length; i++) {
+                            zip.file(file_table[i][0], get_string_range(dataview, pos + file_table[i][1], pos + file_table[i][1] + file_table[i][2]))
+                        }
+                        pos += section_length
+                    } else {
+                        swal("ERROR", "Invalid Format(section_name)", "error")
+                        return
+                    }
+
+                    let section_end = read_string(dataview, 4)
+                    if (section_end != "\x00\x00\x50\x45") {
+                        swal("ERROR", "Invalid Format(section_end)", "error")
+                        return
+                    }
+                }
+            }
+
+            zip.generateAsync({ type: "blob" })
+                .then(function (blob) {
+                    saveAs(blob, "hello.zip");
+                });
+        }
+    </script>
+</body>
+
+</html>
